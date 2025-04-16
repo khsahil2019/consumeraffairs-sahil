@@ -76,11 +76,10 @@ class OnlineProductSurveyDetailViewModel {
       if (_viewModel.isValidationSuccess) {
         for (var commodity in _viewModel.validatedCommodities) {
           int commodityId = commodity.id;
-          commodity.isEditable = true; // Allow edits even if submitted
-          _viewModel.isEditable[commodityId] = commodity.isEditable;
+          commodity.isEditable = true;
+          _viewModel.isEditable[commodityId] = true;
           _viewModel.isSubmitted[commodityId] = commodity.isSubmit;
           _viewModel.isSaved[commodityId] = commodity.isSave;
-          // Only set if not already in priceMap to preserve local changes
           if (!_viewModel.priceMap.containsKey(commodityId)) {
             _viewModel.priceMap[commodityId] = commodity.amount ?? "";
           }
@@ -196,14 +195,12 @@ class OnlineProductSurveyDetailViewModel {
         commodityExpiryDates.add(expiryDate);
         commodityImages.add(image);
 
-        // Update local state
         _viewModel.priceMap[commodityId] = price;
         _viewModel.availabilityMap[commodityId] = availability;
         _viewModel.expiryDateMap[commodityId] = expiryDate;
         _viewModel.selectedImages[commodityId] = image;
         _viewModel.isSaved[commodityId] = true;
 
-        // Save local update
         await _viewModel.offlineViewModel.saveLocalCommodityUpdate(
             surveyId,
             _viewModel.selectedMarket!.id,
@@ -247,36 +244,38 @@ class OnlineProductSurveyDetailViewModel {
           }
         }
 
-        // Persist commodityToSubmittedSurveyId
         await prefs.setString(
           'commodity_survey_map_$surveyId',
           jsonEncode(_viewModel.commodityToSubmittedSurveyId
               .map((k, v) => MapEntry(k.toString(), v))),
         );
 
-        // Clear local updates
         for (var id in commodityIds) {
           await prefs.remove(
               'commodity_update_${surveyId}_${_viewModel.selectedMarket!.id}_${_viewModel.selectedCategory!.id}_$id');
         }
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(response['message'] ?? 'Survey saved successfully'),
-            backgroundColor: Colors.green,
-          ),
-        );
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(response['message'] ?? 'Survey saved successfully'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
       } else {
         throw response['message'] ?? 'Failed to save survey';
       }
     } catch (e) {
       debugPrint("❌ Error in Save: $e");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text("Save Failed: $e"),
-          backgroundColor: Colors.red,
-        ),
-      );
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Save Failed: $e"),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     } finally {
       _viewModel.setIsSaving(false);
       _viewModel.notifyListeners();
@@ -320,7 +319,6 @@ class OnlineProductSurveyDetailViewModel {
       debugPrint(
           "Submitting with zoneId=${_viewModel.fetchedZoneId}, surveyId=${_viewModel.fetchedSurveyId}");
 
-      // Load existing commodity survey map, if available
       final storedMapString =
           prefs.getString('commodity_survey_map_${_viewModel.fetchedSurveyId}');
       if (storedMapString != null) {
@@ -346,6 +344,15 @@ class OnlineProductSurveyDetailViewModel {
       for (var commodity in _viewModel.validatedCommodities) {
         final commodityId = commodity.commodity?.id ?? commodity.id;
         if (commodityId == null) continue;
+
+        // Only include if changed or not submitted
+        if (commodity.isSubmit &&
+            !_viewModel.isPriceTouched[commodityId]! != true &&
+            !_viewModel.isExpiryTouched[commodityId]! != true &&
+            !_viewModel.isImageTouched[commodityId]! != true) {
+          debugPrint("Skipping submitted commodity $commodityId: no changes");
+          continue;
+        }
 
         _viewModel.initializeControllers(commodityId);
 
@@ -387,7 +394,6 @@ class OnlineProductSurveyDetailViewModel {
         commodityExpiryDates.add(expiryDate);
         commodityImages.add(image);
 
-        // Update local state
         _viewModel.priceMap[commodityId] = price;
         _viewModel.availabilityMap[commodityId] = availability;
         _viewModel.expiryDateMap[commodityId] = expiryDate;
@@ -395,7 +401,7 @@ class OnlineProductSurveyDetailViewModel {
       }
 
       if (commodityIds.isEmpty) {
-        throw "No valid commodities to submit. Please ensure commodities have valid IDs.";
+        throw "No valid commodities to submit. Please ensure commodities have valid IDs or changes.";
       }
 
       final response = await _authRepository.submitSurvey(
@@ -425,7 +431,6 @@ class OnlineProductSurveyDetailViewModel {
           }
         }
 
-        // Update commodityToSubmittedSurveyId
         _viewModel.commodityToSubmittedSurveyId.clear();
         final responseData = response['data'] as List?;
         if (responseData != null) {
@@ -440,7 +445,6 @@ class OnlineProductSurveyDetailViewModel {
           }
         }
 
-        // Persist updated state
         await prefs.setString(
           'validated_commodities_${_viewModel.fetchedSurveyId}_${_viewModel.selectedMarket!.id}_${_viewModel.selectedCategory!.id}',
           jsonEncode(
@@ -452,25 +456,29 @@ class OnlineProductSurveyDetailViewModel {
               .map((k, v) => MapEntry(k.toString(), v))),
         );
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content:
-                Text(response['message'] ?? 'Survey submitted successfully'),
-            backgroundColor: Colors.green,
-          ),
-        );
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content:
+                  Text(response['message'] ?? 'Survey submitted successfully'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
       } else {
         throw response['message'] ?? 'Failed to submit survey';
       }
     } catch (e, stackTrace) {
       debugPrint("❌ Submit Error: $e");
       debugPrint("📌 Stack Trace: $stackTrace");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text("Submit Failed: $e"),
-          backgroundColor: Colors.red,
-        ),
-      );
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Submit Failed: $e"),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     } finally {
       _viewModel.setIsSubmitting(false);
       _viewModel.notifyListeners();
@@ -548,7 +556,6 @@ class OnlineProductSurveyDetailViewModel {
           await prefs.remove(key);
           _viewModel.isOfflineSubmitted = false;
 
-          // Update local state
           for (var commodity in _viewModel.validatedCommodities) {
             if (commodityIds
                 .contains(commodity.commodity?.id ?? commodity.id)) {
@@ -558,7 +565,6 @@ class OnlineProductSurveyDetailViewModel {
             }
           }
 
-          // Update commodityToSubmittedSurveyId
           _viewModel.commodityToSubmittedSurveyId.clear();
           final responseData = response['data'] as List?;
           if (responseData != null) {
@@ -573,7 +579,6 @@ class OnlineProductSurveyDetailViewModel {
             }
           }
 
-          // Persist updated state
           await prefs.setString(
             'validated_commodities_${surveyId}_${marketId}_${categoryId}',
             jsonEncode(_viewModel.validatedCommodities
@@ -588,13 +593,15 @@ class OnlineProductSurveyDetailViewModel {
 
           debugPrint(
               "✅ Offline submission for $surveyId/$marketId/$categoryId synced successfully!");
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content:
-                  Text("Offline submission $surveyId synced successfully!"),
-              backgroundColor: Colors.green,
-            ),
-          );
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content:
+                    Text("Offline submission $surveyId synced successfully!"),
+                backgroundColor: Colors.green,
+              ),
+            );
+          }
         } else {
           debugPrint(
               "Failed to sync offline submission for $key: ${response['message']}");
@@ -602,9 +609,12 @@ class OnlineProductSurveyDetailViewModel {
       }
     } catch (e) {
       debugPrint("❌ Error syncing offline data: $e");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Sync failed: $e"), backgroundColor: Colors.red),
-      );
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text("Sync failed: $e"), backgroundColor: Colors.red),
+        );
+      }
     }
   }
 }

@@ -62,6 +62,9 @@ class ProductSurveyDetailViewModel extends ChangeNotifier {
   Map<int, bool> isImageTouched = {};
   bool isOfflineSubmitted = false;
 
+  // Cache for submission status
+  Map<String, bool> _submissionStatusCache = {};
+
   BuildContext? _context;
   Timer? _animationTimer;
 
@@ -155,6 +158,28 @@ class ProductSurveyDetailViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> markCategoryAsSubmitted(
+      int surveyId, int marketId, int categoryId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final key = 'submitted_${surveyId}_${marketId}_${categoryId}';
+    await prefs.setBool(key, true);
+    _submissionStatusCache[key] = true;
+    log("Marked category as submitted: $key");
+    notifyListeners();
+  }
+
+  Future<bool> isCategorySubmitted(
+      int surveyId, int marketId, int categoryId) async {
+    final key = 'submitted_${surveyId}_${marketId}_${categoryId}';
+    if (_submissionStatusCache.containsKey(key)) {
+      return _submissionStatusCache[key]!;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    final isSubmitted = prefs.getBool(key) ?? false;
+    _submissionStatusCache[key] = isSubmitted;
+    return isSubmitted;
+  }
+
   void setSelectedMarket(GenericItem? item) {
     selectedMarket = item;
     selectedCategory = null;
@@ -172,7 +197,7 @@ class ProductSurveyDetailViewModel extends ChangeNotifier {
       priceControllers[commodityId]!.addListener(() {
         updatePrice(commodityId, priceControllers[commodityId]!.text);
       });
-    } else {
+    } else if (priceControllers[commodityId]!.text != priceMap[commodityId]) {
       priceControllers[commodityId]!.text = priceMap[commodityId] ?? "";
     }
 
@@ -195,7 +220,7 @@ class ProductSurveyDetailViewModel extends ChangeNotifier {
     }
 
     isEditable[commodityId] ??= true;
-    log("Initialized controller for commodityId: $commodityId, price: ${priceMap[commodityId] ?? ''}");
+    log("Initialized controller for commodityId: $commodityId, price: ${priceMap[commodityId] ?? ''}, controller text: ${priceControllers[commodityId]?.text}");
   }
 
   void cancelSurvey(BuildContext context) {
@@ -240,7 +265,6 @@ class ProductSurveyDetailViewModel extends ChangeNotifier {
         await offlineViewModel.fetchValidatedCommodities(
             zoneId, surveyId, marketId, categoryId);
       }
-      // Always load local updates to preserve unsaved changes
       await offlineViewModel.loadLocalCommodityUpdates(
           surveyId, marketId, categoryId);
       log("Validated commodities loaded: ${validatedCommodities.length}, "
@@ -283,12 +307,11 @@ class ProductSurveyDetailViewModel extends ChangeNotifier {
       } else {
         await offlineViewModel.saveSurvey(context);
       }
-      // Reset touched flags after save
       isPriceTouched.clear();
       isExpiryTouched.clear();
       isImageTouched.clear();
-      if (_context != null && context.mounted) {
-        ScaffoldMessenger.of(_context!).showSnackBar(
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text("Survey saved successfully"),
             backgroundColor: Colors.green,
@@ -298,8 +321,8 @@ class ProductSurveyDetailViewModel extends ChangeNotifier {
       }
     } catch (e) {
       log("❌ Save Error: $e");
-      if (_context != null && context.mounted) {
-        ScaffoldMessenger.of(_context!).showSnackBar(
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text("Save Failed: $e"),
             backgroundColor: Colors.red,
@@ -320,17 +343,22 @@ class ProductSurveyDetailViewModel extends ChangeNotifier {
       log("Submitting survey, isOnline: $isOnline, commodities: ${validatedCommodities.length}");
       if (isOnline) {
         await onlineViewModel.submitSurvey(context);
+        if (fetchedSurveyId != null &&
+            selectedMarket != null &&
+            selectedCategory != null) {
+          await markCategoryAsSubmitted(
+              fetchedSurveyId!, selectedMarket!.id, selectedCategory!.id);
+        }
         await _markAsSubmittedOnline();
       } else {
         await offlineViewModel.submitSurvey(context);
         isOfflineSubmitted = await _checkOfflineSubmission();
       }
-      // Reset touched flags after submit
       isPriceTouched.clear();
       isExpiryTouched.clear();
       isImageTouched.clear();
-      if (_context != null && context.mounted) {
-        ScaffoldMessenger.of(_context!).showSnackBar(
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text("Survey submitted successfully"),
             backgroundColor: Colors.green,
@@ -341,8 +369,8 @@ class ProductSurveyDetailViewModel extends ChangeNotifier {
     } catch (e, stackTrace) {
       log("❌ Submit Error: $e");
       log("📌 Stack Trace: $stackTrace");
-      if (_context != null && context.mounted) {
-        ScaffoldMessenger.of(_context!).showSnackBar(
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text("Submit Failed: $e"),
             backgroundColor: Colors.red,
@@ -413,12 +441,13 @@ class ProductSurveyDetailViewModel extends ChangeNotifier {
   }
 
   void updatePrice(int commodityId, String price) {
-    if (isEditable[commodityId] == false) return;
-    priceMap[commodityId] = price;
+    if (isEditable[commodityId] == false) {
+      log("Price update blocked for commodityId: $commodityId, isEditable: false");
+      return;
+    }
+    priceMap[commodityId] = price.trim();
     isPriceTouched[commodityId] = true;
-    if (priceControllers.containsKey(commodityId)) {
-      priceControllers[commodityId]?.text = price;
-    } else {
+    if (!priceControllers.containsKey(commodityId)) {
       priceControllers[commodityId] = TextEditingController(text: price);
     }
     offlineViewModel.updatePrice(commodityId, price);
@@ -430,13 +459,28 @@ class ProductSurveyDetailViewModel extends ChangeNotifier {
     return validatedCommodities.any((commodity) => commodity.isSubmit);
   }
 
-  bool get isSubmitButtonDisabled =>
-      isSubmitting ||
-      validatedCommodities.isEmpty ||
-      (!isPriceTouched.values.any((v) => v) &&
-          !isExpiryTouched.values.any((v) => v) &&
-          !isImageTouched.values.any((v) => v) &&
-          validatedCommodities.every((c) => c.isSubmit));
+  bool get isSubmitButtonDisabled {
+    if (isSubmitting || validatedCommodities.isEmpty) {
+      log("Submit button disabled: isSubmitting=$isSubmitting, validatedCommodities empty=${validatedCommodities.isEmpty}");
+      return true;
+    }
+    if (fetchedSurveyId != null &&
+        selectedMarket != null &&
+        selectedCategory != null) {
+      final key =
+          'submitted_${fetchedSurveyId}_${selectedMarket!.id}_${selectedCategory!.id}';
+      if (_submissionStatusCache.containsKey(key) &&
+          _submissionStatusCache[key]!) {
+        log("Submit button disabled: Category already submitted ($key)");
+        return true;
+      }
+    }
+    final hasChanges = isPriceTouched.values.any((v) => v) ||
+        isExpiryTouched.values.any((v) => v) ||
+        isImageTouched.values.any((v) => v);
+    log("Submit button disabled: ${!hasChanges}, hasChanges=$hasChanges");
+    return !hasChanges;
+  }
 
   Future<bool> isInternetAvailable() async {
     var connectivityResult = await Connectivity().checkConnectivity();

@@ -79,11 +79,10 @@ class OfflineProductSurveyDetailViewModel {
 
         for (var commodity in _viewModel.validatedCommodities) {
           int commodityId = commodity.id;
-          commodity.isEditable = true; // Allow edits even if submitted
-          _viewModel.isEditable[commodityId] = commodity.isEditable;
+          commodity.isEditable = true;
+          _viewModel.isEditable[commodityId] = true;
           _viewModel.isSubmitted[commodityId] = commodity.isSubmit;
           _viewModel.isSaved[commodityId] = commodity.isSave;
-          // Only set if not already in maps to preserve local changes
           if (!_viewModel.priceMap.containsKey(commodityId)) {
             _viewModel.priceMap[commodityId] = commodity.amount ?? "";
           }
@@ -120,23 +119,6 @@ class OfflineProductSurveyDetailViewModel {
     }
   }
 
-  // Future<void> _saveLocalCommodityUpdate(
-  //     int surveyId, int marketId, int categoryId, int commodityId) async {
-  //   final prefs = await SharedPreferences.getInstance();
-  //   final key =
-  //       'commodity_update_${surveyId}_${marketId}_${categoryId}_$commodityId';
-  //   final data = {
-  //     'commodity_id': commodityId,
-  //     'price': _viewModel.priceMap[commodityId] ?? "",
-  //     'availability': _viewModel.availabilityMap[commodityId] ?? "moderate",
-  //     'expiry_date': _viewModel.expiryDateMap[commodityId] ?? "",
-  //     'image': _viewModel.selectedImages[commodityId] ?? "",
-  //     'is_submitted': _viewModel.isSubmitted[commodityId] ?? false,
-  //     'is_saved': _viewModel.isSaved[commodityId] ?? false,
-  //   };
-  //   await prefs.setString(key, jsonEncode(data));
-  //   debugPrint("✅ Saved local commodity update for $key: $data");
-  // }
   Future<void> saveLocalCommodityUpdate(
       int surveyId, int marketId, int categoryId, int commodityId) async {
     final prefs = await SharedPreferences.getInstance();
@@ -235,7 +217,6 @@ class OfflineProductSurveyDetailViewModel {
           continue;
         }
 
-        // Update local state
         _viewModel.priceMap[commodityId] = price;
         _viewModel.availabilityMap[commodityId] = availability;
         _viewModel.expiryDateMap[commodityId] = expiryDate;
@@ -252,7 +233,6 @@ class OfflineProductSurveyDetailViewModel {
           'brand_id': brandId,
         });
 
-        // Save individual update
         await saveLocalCommodityUpdate(
             surveyId, marketId, categoryId, commodityId);
       }
@@ -276,20 +256,24 @@ class OfflineProductSurveyDetailViewModel {
       await prefs.setString(key, jsonEncode(offlineData));
       debugPrint("✅ Saved offline survey data to $key");
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Saved offline. Will sync when online."),
-          backgroundColor: Colors.orange,
-        ),
-      );
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Saved offline. Will sync when online."),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
     } catch (e) {
       debugPrint("❌ Error in Offline Save: $e");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text("Save Failed: $e"),
-          backgroundColor: Colors.red,
-        ),
-      );
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Save Failed: $e"),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     } finally {
       _viewModel.setIsSaving(false);
       _viewModel.notifyListeners();
@@ -368,7 +352,6 @@ class OfflineProductSurveyDetailViewModel {
         commodityExpiryDates.add(expiryDate);
         commodityImages.add(image);
 
-        // Update local state
         commodity.isSubmit;
         _viewModel.isSubmitted[commodityId] = true;
         _viewModel.isEditable[commodityId] = false;
@@ -378,7 +361,6 @@ class OfflineProductSurveyDetailViewModel {
         throw "No valid commodities to submit. Please ensure commodities have valid IDs.";
       }
 
-      // Save offline submission data
       final offlineData = {
         'token': prefs.getString('token') ?? '',
         'userId': userId,
@@ -403,7 +385,6 @@ class OfflineProductSurveyDetailViewModel {
           'offline_submission_${surveyId}_${DateTime.now().millisecondsSinceEpoch}';
       await prefs.setString(key, jsonEncode(offlineData));
 
-      // Persist validated commodities
       await prefs.setString(
         'validated_commodities_${surveyId}_${marketId}_${categoryId}',
         jsonEncode(
@@ -411,22 +392,27 @@ class OfflineProductSurveyDetailViewModel {
       );
 
       _viewModel.isOfflineSubmitted = true;
+      await _viewModel.markCategoryAsSubmitted(surveyId, marketId, categoryId);
 
       debugPrint("✅ Survey submitted offline and saved for later sync: $key");
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Survey submitted offline. Will sync when online."),
-          backgroundColor: Colors.blue,
-        ),
-      );
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Survey submitted offline. Will sync when online."),
+            backgroundColor: Colors.blue,
+          ),
+        );
+      }
     } catch (e) {
       debugPrint("❌ Error in Offline Submit: $e");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text("Submit Failed: $e"),
-          backgroundColor: Colors.red,
-        ),
-      );
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Submit Failed: $e"),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     } finally {
       _viewModel.setIsSubmitting(false);
       _viewModel.notifyListeners();
