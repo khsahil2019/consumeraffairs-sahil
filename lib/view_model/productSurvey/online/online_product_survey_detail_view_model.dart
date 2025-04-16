@@ -59,17 +59,6 @@ class OnlineProductSurveyDetailViewModel {
       _viewModel.isLoading = true;
       _viewModel.notifyListeners();
 
-      _viewModel.validatedCommodities.clear();
-      _viewModel.priceMap.clear();
-      _viewModel.availabilityMap.clear();
-      _viewModel.expiryDateMap.clear();
-      _viewModel.selectedImages.clear();
-      _viewModel.isSaved.clear();
-      _viewModel.isSubmitted.clear();
-      _viewModel.priceControllers.clear();
-      _viewModel.expiryControllers.clear();
-      _viewModel.availabilityControllers.clear();
-
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('token') ?? '';
 
@@ -87,20 +76,29 @@ class OnlineProductSurveyDetailViewModel {
       if (_viewModel.isValidationSuccess) {
         for (var commodity in _viewModel.validatedCommodities) {
           int commodityId = commodity.id;
-          commodity.isEditable = !commodity.isSubmit;
+          commodity.isEditable = true; // Allow edits even if submitted
           _viewModel.isEditable[commodityId] = commodity.isEditable;
           _viewModel.isSubmitted[commodityId] = commodity.isSubmit;
           _viewModel.isSaved[commodityId] = commodity.isSave;
-          _viewModel.priceMap[commodityId] = commodity.amount ?? "";
-          _viewModel.availabilityMap[commodityId] =
-              commodity.availability?.toLowerCase() ?? "moderate";
-          _viewModel.expiryDateMap[commodityId] =
-              commodity.commodityExpiryDate ?? "";
-          if (commodity.commodityImageUrl != null &&
+          // Only set if not already in priceMap to preserve local changes
+          if (!_viewModel.priceMap.containsKey(commodityId)) {
+            _viewModel.priceMap[commodityId] = commodity.amount ?? "";
+          }
+          if (!_viewModel.availabilityMap.containsKey(commodityId)) {
+            _viewModel.availabilityMap[commodityId] =
+                commodity.availability?.toLowerCase() ?? "moderate";
+          }
+          if (!_viewModel.expiryDateMap.containsKey(commodityId)) {
+            _viewModel.expiryDateMap[commodityId] =
+                commodity.commodityExpiryDate ?? "";
+          }
+          if (!_viewModel.selectedImages.containsKey(commodityId) &&
+              commodity.commodityImageUrl != null &&
               commodity.commodityImageUrl!.isNotEmpty) {
             _viewModel.selectedImages[commodityId] =
                 commodity.commodityImageUrl!;
           }
+          _viewModel.initializeControllers(commodityId);
         }
 
         await prefs.setString(
@@ -111,9 +109,6 @@ class OnlineProductSurveyDetailViewModel {
         debugPrint(
             "✅ Saved validated commodities for $surveyId/$marketId/$categoryId");
       }
-
-      await _viewModel.offlineViewModel
-          .loadLocalCommodityUpdates(surveyId, marketId, categoryId);
 
       _viewModel.isLoading = false;
       _viewModel.notifyListeners();
@@ -207,6 +202,13 @@ class OnlineProductSurveyDetailViewModel {
         _viewModel.expiryDateMap[commodityId] = expiryDate;
         _viewModel.selectedImages[commodityId] = image;
         _viewModel.isSaved[commodityId] = true;
+
+        // Save local update
+        await _viewModel.offlineViewModel.saveLocalCommodityUpdate(
+            surveyId,
+            _viewModel.selectedMarket!.id,
+            _viewModel.selectedCategory!.id,
+            commodityId);
       }
 
       if (commodityIds.isEmpty) {
@@ -347,7 +349,6 @@ class OnlineProductSurveyDetailViewModel {
 
         _viewModel.initializeControllers(commodityId);
 
-        // Allow empty price, expiry, image
         final price = getValue(
           _viewModel.priceControllers[commodityId]?.text,
           _viewModel.priceMap[commodityId],
@@ -368,7 +369,6 @@ class OnlineProductSurveyDetailViewModel {
         final unitId = commodity.unit?.id;
         final brandId = commodity.brand?.id;
 
-        // Skip if missing required IDs
         if (unitId == null || brandId == null) {
           debugPrint(
               "Skipping commodity $commodityId: Missing unitId or brandId");
@@ -525,15 +525,6 @@ class OnlineProductSurveyDetailViewModel {
             List<String>.from(data['commodityExpiryDates'] ?? []);
         List<String> commodityImages =
             List<String>.from(data['commodityImages'] ?? []);
-
-        // Validate data
-        if (commodityIds.isEmpty ||
-            amounts.any((a) => a.isEmpty || double.tryParse(a) == null) ||
-            unitIds.any((u) => u == 0) ||
-            brandIds.any((b) => b == 0)) {
-          debugPrint("Skipping sync for $key: Invalid commodity data");
-          continue;
-        }
 
         final response = await _authRepository.submitSurvey(
           bearerToken: token,

@@ -292,7 +292,7 @@ List<Widget> buildCommodityRows(
                 },
                 child: TextField(
                   controller: viewModel.priceControllers[commodityId],
-                  enabled: isEditable,
+                  enabled: viewModel.isEditable[commodityId] ?? true,
                   keyboardType:
                       const TextInputType.numberWithOptions(decimal: true),
                   decoration: InputDecoration(
@@ -317,11 +317,12 @@ List<Widget> buildCommodityRows(
                   style: TextStyle(fontSize: isTablet ? 14 : 12),
                   textAlign: TextAlign.center,
                   onChanged: (val) {
-                    final id = validatedCommodity?.commodity?.id ??
-                        availableCommodity?.id ??
-                        0;
-                    viewModel.updatePrice(id, val);
-                    viewModel.isPriceTouched[id] = true;
+                    // final id = validatedCommodity?.commodity?.id ??
+                    //     availableCommodity?.id ??
+                    //     0;
+                    viewModel.updatePrice(commodityId, val);
+                    //  viewModel.updatePrice(id, val);
+                    //    viewModel.isPriceTouched[id] = true;
                   },
                   onSubmitted: (value) {
                     FocusScope.of(context).unfocus();

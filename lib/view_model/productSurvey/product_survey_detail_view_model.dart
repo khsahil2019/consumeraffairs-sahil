@@ -58,6 +58,8 @@ class ProductSurveyDetailViewModel extends ChangeNotifier {
   Map<int, int> commodityToSubmittedSurveyId = {};
 
   Map<int, bool> isPriceTouched = {};
+  Map<int, bool> isExpiryTouched = {};
+  Map<int, bool> isImageTouched = {};
   bool isOfflineSubmitted = false;
 
   BuildContext? _context;
@@ -102,6 +104,7 @@ class ProductSurveyDetailViewModel extends ChangeNotifier {
     } else {
       _stopButtonAnimation("save");
     }
+    notifyListeners();
   }
 
   void setIsSubmitting(bool value) {
@@ -111,6 +114,7 @@ class ProductSurveyDetailViewModel extends ChangeNotifier {
     } else {
       _stopButtonAnimation("submit");
     }
+    notifyListeners();
   }
 
   int get totalCategories => markets.length * categories.length;
@@ -165,17 +169,33 @@ class ProductSurveyDetailViewModel extends ChangeNotifier {
     if (!priceControllers.containsKey(commodityId)) {
       priceControllers[commodityId] =
           TextEditingController(text: priceMap[commodityId] ?? "");
+      priceControllers[commodityId]!.addListener(() {
+        updatePrice(commodityId, priceControllers[commodityId]!.text);
+      });
+    } else {
+      priceControllers[commodityId]!.text = priceMap[commodityId] ?? "";
     }
 
     if (!availabilityControllers.containsKey(commodityId)) {
       availabilityControllers[commodityId] = TextEditingController(
           text: availabilityMap[commodityId]?.toLowerCase() ?? "moderate");
+    } else {
+      availabilityControllers[commodityId]!.text =
+          availabilityMap[commodityId]?.toLowerCase() ?? "moderate";
     }
 
     if (!expiryControllers.containsKey(commodityId)) {
       expiryControllers[commodityId] =
           TextEditingController(text: expiryDateMap[commodityId] ?? "");
+      expiryControllers[commodityId]!.addListener(() {
+        updateExpiryDate(commodityId, expiryControllers[commodityId]!.text);
+      });
+    } else {
+      expiryControllers[commodityId]!.text = expiryDateMap[commodityId] ?? "";
     }
+
+    isEditable[commodityId] ??= true;
+    log("Initialized controller for commodityId: $commodityId, price: ${priceMap[commodityId] ?? ''}");
   }
 
   void cancelSurvey(BuildContext context) {
@@ -220,7 +240,9 @@ class ProductSurveyDetailViewModel extends ChangeNotifier {
         await offlineViewModel.fetchValidatedCommodities(
             zoneId, surveyId, marketId, categoryId);
       }
-      commodityToSubmittedSurveyId.clear();
+      // Always load local updates to preserve unsaved changes
+      await offlineViewModel.loadLocalCommodityUpdates(
+          surveyId, marketId, categoryId);
       log("Validated commodities loaded: ${validatedCommodities.length}, "
           "isValidationSuccess: $isValidationSuccess");
       for (var c in validatedCommodities) {
@@ -261,6 +283,10 @@ class ProductSurveyDetailViewModel extends ChangeNotifier {
       } else {
         await offlineViewModel.saveSurvey(context);
       }
+      // Reset touched flags after save
+      isPriceTouched.clear();
+      isExpiryTouched.clear();
+      isImageTouched.clear();
       if (_context != null && context.mounted) {
         ScaffoldMessenger.of(_context!).showSnackBar(
           SnackBar(
@@ -299,6 +325,10 @@ class ProductSurveyDetailViewModel extends ChangeNotifier {
         await offlineViewModel.submitSurvey(context);
         isOfflineSubmitted = await _checkOfflineSubmission();
       }
+      // Reset touched flags after submit
+      isPriceTouched.clear();
+      isExpiryTouched.clear();
+      isImageTouched.clear();
       if (_context != null && context.mounted) {
         ScaffoldMessenger.of(_context!).showSnackBar(
           SnackBar(
@@ -364,6 +394,7 @@ class ProductSurveyDetailViewModel extends ChangeNotifier {
   void updateExpiryDate(int commodityId, String date) {
     if (isEditable[commodityId] == false) return;
     expiryDateMap[commodityId] = date;
+    isExpiryTouched[commodityId] = true;
     if (expiryControllers.containsKey(commodityId)) {
       expiryControllers[commodityId]?.text = date;
     } else {
@@ -376,6 +407,7 @@ class ProductSurveyDetailViewModel extends ChangeNotifier {
   void updateImage(int commodityId, String imagePath) {
     if (isEditable[commodityId] == false) return;
     selectedImages[commodityId] = imagePath;
+    isImageTouched[commodityId] = true;
     offlineViewModel.updateImage(commodityId, imagePath);
     notifyListeners();
   }
@@ -383,12 +415,14 @@ class ProductSurveyDetailViewModel extends ChangeNotifier {
   void updatePrice(int commodityId, String price) {
     if (isEditable[commodityId] == false) return;
     priceMap[commodityId] = price;
+    isPriceTouched[commodityId] = true;
     if (priceControllers.containsKey(commodityId)) {
       priceControllers[commodityId]?.text = price;
     } else {
       priceControllers[commodityId] = TextEditingController(text: price);
     }
     offlineViewModel.updatePrice(commodityId, price);
+    log("Updated price for commodityId: $commodityId, price: $price");
     notifyListeners();
   }
 
@@ -399,7 +433,10 @@ class ProductSurveyDetailViewModel extends ChangeNotifier {
   bool get isSubmitButtonDisabled =>
       isSubmitting ||
       validatedCommodities.isEmpty ||
-      validatedCommodities.every((c) => c.isSubmit);
+      (!isPriceTouched.values.any((v) => v) &&
+          !isExpiryTouched.values.any((v) => v) &&
+          !isImageTouched.values.any((v) => v) &&
+          validatedCommodities.every((c) => c.isSubmit));
 
   Future<bool> isInternetAvailable() async {
     var connectivityResult = await Connectivity().checkConnectivity();
