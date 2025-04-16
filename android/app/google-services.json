@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "950680291615",
+    "project_id": "consumeraffairs-9eb55",
+    "storage_bucket": "consumeraffairs-9eb55.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:950680291615:android:2f8e528c3922928f2d882a",
+        "android_client_info": {
+          "package_name": "com.example.cunsumer_affairs_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCE-mlv8E4Le9I8ZDe9h-n8cDGZnEG2tlg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
