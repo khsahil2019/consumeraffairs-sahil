@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:cunsumer_affairs_app/data/models/survey_commodity_model.dart';
 import 'package:cunsumer_affairs_app/data/models/survey_detail_model.dart';
@@ -137,7 +138,8 @@ class ProductSurveyDetailViewModel extends ChangeNotifier {
   Future<bool> _checkOfflineSubmission() async {
     final prefs = await SharedPreferences.getInstance();
     final surveyId = fetchedSurveyId?.toString() ?? '';
-    return prefs.containsKey('offline_submission_$surveyId') ||
+    final keys = prefs.getKeys();
+    return keys.any((key) => key.startsWith('offline_submission_$surveyId')) ||
         prefs.getBool('submitted_online_$surveyId') == true;
   }
 
@@ -151,6 +153,9 @@ class ProductSurveyDetailViewModel extends ChangeNotifier {
 
   void setSelectedMarket(GenericItem? item) {
     selectedMarket = item;
+    selectedCategory = null;
+    validatedCommodities.clear();
+    log("Cleared validatedCommodities on market change");
     notifyListeners();
   }
 
@@ -158,18 +163,18 @@ class ProductSurveyDetailViewModel extends ChangeNotifier {
     expiryFocusNodes[commodityId] ??= FocusNode();
 
     if (!priceControllers.containsKey(commodityId)) {
-      final value = priceMap[commodityId] ?? "";
-      priceControllers[commodityId] = TextEditingController(text: value);
+      priceControllers[commodityId] =
+          TextEditingController(text: priceMap[commodityId] ?? "");
     }
 
     if (!availabilityControllers.containsKey(commodityId)) {
-      final value = availabilityMap[commodityId] ?? "moderate";
-      availabilityControllers[commodityId] = TextEditingController(text: value);
+      availabilityControllers[commodityId] = TextEditingController(
+          text: availabilityMap[commodityId]?.toLowerCase() ?? "moderate");
     }
 
     if (!expiryControllers.containsKey(commodityId)) {
-      final value = expiryDateMap[commodityId] ?? "";
-      expiryControllers[commodityId] = TextEditingController(text: value);
+      expiryControllers[commodityId] =
+          TextEditingController(text: expiryDateMap[commodityId] ?? "");
     }
   }
 
@@ -178,35 +183,63 @@ class ProductSurveyDetailViewModel extends ChangeNotifier {
   }
 
   Future<void> fetchSurveyDetail(int surveyId) async {
-    final isOnline = await isInternetAvailable();
-    if (isOnline) {
-      await onlineViewModel.fetchSurveyDetail(surveyId);
-    } else {
-      await offlineViewModel.fetchSurveyDetail(surveyId);
+    isLoading = true;
+    notifyListeners();
+    try {
+      final isOnline = await isInternetAvailable();
+      log("Fetching survey detail, isOnline: $isOnline, surveyId: $surveyId");
+      if (isOnline) {
+        await onlineViewModel.fetchSurveyDetail(surveyId);
+      } else {
+        await offlineViewModel.fetchSurveyDetail(surveyId);
+      }
+      selectedMarket = null;
+      selectedCategory = null;
+      availableCommodities = [];
+      commodityToSubmittedSurveyId.clear();
+      await _loadSubmittedStatus();
+    } catch (e) {
+      log("Error fetching survey detail: $e");
+      errorMessage = "Failed to load survey details";
+    } finally {
+      isLoading = false;
+      notifyListeners();
     }
-    selectedMarket = null;
-    selectedCategory = null;
-    availableCommodities = [];
-    commodityToSubmittedSurveyId.clear();
-    await _loadSubmittedStatus();
   }
 
   Future<void> fetchValidatedCommodities(
       int zoneId, int surveyId, int marketId, int categoryId) async {
-    final isOnline = await isInternetAvailable();
-    if (isOnline) {
-      await onlineViewModel.fetchValidatedCommodities(
-          zoneId, surveyId, marketId, categoryId);
-    } else {
-      await offlineViewModel.fetchValidatedCommodities(
-          zoneId, surveyId, marketId, categoryId);
+    try {
+      final isOnline = await isInternetAvailable();
+      log("Fetching validated commodities, isOnline: $isOnline, "
+          "zoneId: $zoneId, surveyId: $surveyId, marketId: $marketId, categoryId: $categoryId");
+      if (isOnline) {
+        await onlineViewModel.fetchValidatedCommodities(
+            zoneId, surveyId, marketId, categoryId);
+      } else {
+        await offlineViewModel.fetchValidatedCommodities(
+            zoneId, surveyId, marketId, categoryId);
+      }
+      commodityToSubmittedSurveyId.clear();
+      log("Validated commodities loaded: ${validatedCommodities.length}, "
+          "isValidationSuccess: $isValidationSuccess");
+      for (var c in validatedCommodities) {
+        log("Commodity id: ${c.id}, isSubmit: ${c.isSubmit}, "
+            "name: ${c.commodity?.name ?? 'N/A'}");
+      }
+    } catch (e) {
+      log("Error fetching validated commodities: $e");
+      errorMessage = "Failed to load commodities";
+      validatedCommodities.clear();
+    } finally {
+      notifyListeners();
     }
-    commodityToSubmittedSurveyId.clear();
   }
 
   void setSelectedCategory(Category? item) async {
     selectedCategory = item;
     availableCommodities = item?.commodities ?? [];
+    log("Selected category: ${item?.name}, availableCommodities: ${availableCommodities.length}");
 
     if (selectedCategory != null &&
         selectedMarket != null &&
@@ -222,45 +255,71 @@ class ProductSurveyDetailViewModel extends ChangeNotifier {
     try {
       setIsSaving(true);
       final isOnline = await isInternetAvailable();
+      log("Saving survey, isOnline: $isOnline, commodities: ${validatedCommodities.length}");
       if (isOnline) {
         await onlineViewModel.saveSurvey(context);
       } else {
         await offlineViewModel.saveSurvey(context);
       }
+      if (_context != null && context.mounted) {
+        ScaffoldMessenger.of(_context!).showSnackBar(
+          SnackBar(
+            content: Text("Survey saved successfully"),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
     } catch (e) {
-      debugPrint("❌ Save Error: $e");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text("Save Failed: $e"),
-          backgroundColor: Colors.red,
-        ),
-      );
+      log("❌ Save Error: $e");
+      if (_context != null && context.mounted) {
+        ScaffoldMessenger.of(_context!).showSnackBar(
+          SnackBar(
+            content: Text("Save Failed: $e"),
+            backgroundColor: Colors.red,
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
     } finally {
       setIsSaving(false);
     }
   }
 
   Future<void> submitSurvey(BuildContext context) async {
-    if (isOfflineSubmitted || isSubmitting) return;
+    if (isSubmitting) return;
     try {
       setIsSubmitting(true);
       final isOnline = await isInternetAvailable();
+      log("Submitting survey, isOnline: $isOnline, commodities: ${validatedCommodities.length}");
       if (isOnline) {
         await onlineViewModel.submitSurvey(context);
         await _markAsSubmittedOnline();
       } else {
         await offlineViewModel.submitSurvey(context);
-        isOfflineSubmitted = true;
+        isOfflineSubmitted = await _checkOfflineSubmission();
+      }
+      if (_context != null && context.mounted) {
+        ScaffoldMessenger.of(_context!).showSnackBar(
+          SnackBar(
+            content: Text("Survey submitted successfully"),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
+          ),
+        );
       }
     } catch (e, stackTrace) {
-      debugPrint("❌ Submit Error: $e");
-      debugPrint("📌 Stack Trace: $stackTrace");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text("Submit Failed: $e"),
-          backgroundColor: Colors.red,
-        ),
-      );
+      log("❌ Submit Error: $e");
+      log("📌 Stack Trace: $stackTrace");
+      if (_context != null && context.mounted) {
+        ScaffoldMessenger.of(_context!).showSnackBar(
+          SnackBar(
+            content: Text("Submit Failed: $e"),
+            backgroundColor: Colors.red,
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -270,45 +329,77 @@ class ProductSurveyDetailViewModel extends ChangeNotifier {
     if (!isOfflineSubmitted || _context == null) return;
     try {
       setIsSubmitting(true);
+      log("Syncing offline data");
       await onlineViewModel.syncOfflineData(_context!);
       await _markAsSubmittedOnline();
+      if (_context != null && _context!.mounted) {
+        ScaffoldMessenger.of(_context!).showSnackBar(
+          SnackBar(
+            content: Text("Offline submissions synced successfully!"),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      log("❌ Sync Error: $e");
     } finally {
       setIsSubmitting(false);
     }
   }
 
   void updateAvailability(int commodityId, String availability) {
+    if (isEditable[commodityId] == false) return;
+    availabilityMap[commodityId] = availability;
+    if (availabilityControllers.containsKey(commodityId)) {
+      availabilityControllers[commodityId]?.text = availability;
+    } else {
+      availabilityControllers[commodityId] =
+          TextEditingController(text: availability);
+    }
     offlineViewModel.updateAvailability(commodityId, availability);
+    notifyListeners();
   }
 
   void updateExpiryDate(int commodityId, String date) {
+    if (isEditable[commodityId] == false) return;
+    expiryDateMap[commodityId] = date;
+    if (expiryControllers.containsKey(commodityId)) {
+      expiryControllers[commodityId]?.text = date;
+    } else {
+      expiryControllers[commodityId] = TextEditingController(text: date);
+    }
     offlineViewModel.updateExpiryDate(commodityId, date);
+    notifyListeners();
   }
 
   void updateImage(int commodityId, String imagePath) {
+    if (isEditable[commodityId] == false) return;
+    selectedImages[commodityId] = imagePath;
     offlineViewModel.updateImage(commodityId, imagePath);
+    notifyListeners();
   }
 
   void updatePrice(int commodityId, String price) {
+    if (isEditable[commodityId] == false) return;
     priceMap[commodityId] = price;
-    final controller = priceControllers[commodityId];
-    if (controller != null) {
-      controller.text = price;
+    if (priceControllers.containsKey(commodityId)) {
+      priceControllers[commodityId]?.text = price;
+    } else {
+      priceControllers[commodityId] = TextEditingController(text: price);
     }
-    isPriceTouched[commodityId] = true;
+    offlineViewModel.updatePrice(commodityId, price);
     notifyListeners();
   }
 
   bool get isAnyCommoditySubmitted {
-    for (var commodity in validatedCommodities) {
-      if (commodity.isSubmit) {
-        return true;
-      }
-    }
-    return false;
+    return validatedCommodities.any((commodity) => commodity.isSubmit);
   }
 
-  bool get isSubmitButtonDisabled => isOfflineSubmitted || isSubmitting;
+  bool get isSubmitButtonDisabled =>
+      isSubmitting ||
+      validatedCommodities.isEmpty ||
+      validatedCommodities.every((c) => c.isSubmit);
 
   Future<bool> isInternetAvailable() async {
     var connectivityResult = await Connectivity().checkConnectivity();
@@ -316,19 +407,9 @@ class ProductSurveyDetailViewModel extends ChangeNotifier {
   }
 
   void _setupNetworkListener() {
-    Connectivity()
-        .onConnectivityChanged
-        .listen((ConnectivityResult result) async {
+    Connectivity().onConnectivityChanged.listen((result) async {
       if (result != ConnectivityResult.none && isOfflineSubmitted) {
         await syncOfflineData();
-        if (_context != null) {
-          ScaffoldMessenger.of(_context!).showSnackBar(
-            SnackBar(
-              content: Text("Offline submissions synced successfully!"),
-              backgroundColor: Colors.green,
-            ),
-          );
-        }
       }
     });
   }
@@ -336,6 +417,11 @@ class ProductSurveyDetailViewModel extends ChangeNotifier {
   @override
   void dispose() {
     _animationTimer?.cancel();
+    expiryFocusNodes.values.forEach((node) => node.dispose());
+    priceControllers.values.forEach((controller) => controller.dispose());
+    availabilityControllers.values
+        .forEach((controller) => controller.dispose());
+    expiryControllers.values.forEach((controller) => controller.dispose());
     super.dispose();
   }
 }

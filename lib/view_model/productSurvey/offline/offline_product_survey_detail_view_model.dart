@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:developer';
 import 'package:cunsumer_affairs_app/data/models/survey_commodity_model.dart';
 import 'package:cunsumer_affairs_app/data/models/survey_detail_model.dart';
 import 'package:cunsumer_affairs_app/view_model/productSurvey/product_survey_detail_view_model.dart';
@@ -14,7 +13,8 @@ class OfflineProductSurveyDetailViewModel {
   Future<void> loadSubmittedStatus() async {
     final prefs = await SharedPreferences.getInstance();
     final surveyId = _viewModel.fetchedSurveyId ?? 0;
-    final storedData = prefs.getString('validated_commodities_$surveyId');
+    final storedData = prefs.getString(
+        'validated_commodities_$surveyId${_viewModel.selectedMarket?.id ?? ''}${_viewModel.selectedCategory?.id ?? ''}');
     if (storedData != null) {
       final decodedData = jsonDecode(storedData) as List;
       _viewModel.validatedCommodities =
@@ -48,9 +48,7 @@ class OfflineProductSurveyDetailViewModel {
             .toList();
         debugPrint("Successfully loaded survey detail for ID: $surveyId");
       } else {
-        _viewModel.errorMessage =
-            "No offline data available for survey ID: $surveyId";
-        debugPrint(_viewModel.errorMessage);
+        throw "No offline data available for survey ID: $surveyId";
       }
 
       _viewModel.isLoading = false;
@@ -96,18 +94,15 @@ class OfflineProductSurveyDetailViewModel {
           _viewModel.isEditable[commodityId] = commodity.isEditable;
           _viewModel.isSubmitted[commodityId] = commodity.isSubmit;
           _viewModel.isSaved[commodityId] = commodity.isSave;
-
           _viewModel.priceMap[commodityId] = commodity.amount ?? "";
           _viewModel.availabilityMap[commodityId] =
-              commodity.availability ?? "moderate";
+              commodity.availability?.toLowerCase() ?? "moderate";
           _viewModel.expiryDateMap[commodityId] =
-              commodity.commodityExpiryDate ?? ""; // Ensure this is set
+              commodity.commodityExpiryDate ?? "";
           _viewModel.selectedImages[commodityId] =
               commodity.commodityImageUrl ?? "";
 
-          // Initialize or update the controller
-          _viewModel.expiryControllers[commodityId] = TextEditingController(
-              text: _viewModel.expiryDateMap[commodityId] ?? "");
+          _viewModel.initializeControllers(commodityId);
         }
         debugPrint(
             "✅ Loaded offline validated commodities for $surveyId/$marketId/$categoryId");
@@ -161,22 +156,15 @@ class OfflineProductSurveyDetailViewModel {
         final decodedData = jsonDecode(storedData);
         _viewModel.priceMap[commodityId] = decodedData['price'] ?? "";
         _viewModel.availabilityMap[commodityId] =
-            decodedData['availability'] ?? "moderate";
+            decodedData['availability']?.toLowerCase() ?? "moderate";
         _viewModel.expiryDateMap[commodityId] =
-            decodedData['expiry_date'] ?? ""; // Ensure this is updated
+            decodedData['expiry_date'] ?? "";
         _viewModel.selectedImages[commodityId] = decodedData['image'] ?? "";
         _viewModel.isSubmitted[commodityId] =
             decodedData['is_submitted'] ?? false;
         _viewModel.isSaved[commodityId] = decodedData['is_saved'] ?? false;
 
-        // Update the controller with the latest expiry date
-        if (_viewModel.expiryControllers.containsKey(commodityId)) {
-          _viewModel.expiryControllers[commodityId]!.text =
-              _viewModel.expiryDateMap[commodityId] ?? "";
-        } else {
-          _viewModel.expiryControllers[commodityId] = TextEditingController(
-              text: _viewModel.expiryDateMap[commodityId] ?? "");
-        }
+        _viewModel.initializeControllers(commodityId);
         debugPrint("✅ Loaded local commodity update for $key: $decodedData");
       }
     }
@@ -185,7 +173,6 @@ class OfflineProductSurveyDetailViewModel {
 
   Future<void> saveSurvey(BuildContext context) async {
     try {
-      //  _viewModel.isLoading = true;//
       _viewModel.setIsSaving(true);
       _viewModel.notifyListeners();
 
@@ -197,23 +184,29 @@ class OfflineProductSurveyDetailViewModel {
         throw "Please select both Market and Category before saving.";
       }
 
-      final surveyId = _viewModel.fetchedSurveyId ?? 0;
-      final zoneId = _viewModel.fetchedZoneId ?? 0;
+      final surveyId = _viewModel.fetchedSurveyId;
+      final zoneId = _viewModel.fetchedZoneId;
       final marketId = _viewModel.selectedMarket!.id;
       final categoryId = _viewModel.selectedCategory!.id;
+
+      if (surveyId == null || zoneId == null) {
+        throw "Missing survey or zone information.";
+      }
 
       List<Map<String, dynamic>> commodityUpdates = [];
 
       for (var commodity in _viewModel.validatedCommodities) {
-        final commodityId = commodity.id;
-        _viewModel.initializeControllers(commodityId);
+        final commodityId = commodity.commodity?.id ?? commodity.id;
+        if (commodityId == null) continue;
 
+        _viewModel.initializeControllers(commodityId);
         final price = _viewModel.priceControllers[commodityId]?.text.trim() ??
             _viewModel.priceMap[commodityId] ??
             "";
         final availability =
             _viewModel.availabilityControllers[commodityId]?.text.trim() ??
                 _viewModel.availabilityMap[commodityId] ??
+                commodity.availability?.toLowerCase() ??
                 "moderate";
         final expiryDate =
             _viewModel.expiryControllers[commodityId]?.text.trim() ??
@@ -221,7 +214,17 @@ class OfflineProductSurveyDetailViewModel {
                 "";
         final image = _viewModel.selectedImages[commodityId] ?? "";
 
-        // Update local maps
+        final unitId = commodity.unit?.id;
+        final brandId = commodity.brand?.id;
+
+        // Skip if missing required IDs
+        if (unitId == null || brandId == null) {
+          debugPrint(
+              "Skipping commodity $commodityId: Missing unitId or brandId");
+          continue;
+        }
+
+        // Update local state
         _viewModel.priceMap[commodityId] = price;
         _viewModel.availabilityMap[commodityId] = availability;
         _viewModel.expiryDateMap[commodityId] = expiryDate;
@@ -234,8 +237,8 @@ class OfflineProductSurveyDetailViewModel {
           'availability': availability,
           'expiry_date': expiryDate,
           'image': image,
-          'unit_id': commodity.unit?.id ?? 0,
-          'brand_id': commodity.brand?.id ?? 0,
+          'unit_id': unitId,
+          'brand_id': brandId,
         });
 
         // Save individual update
@@ -244,7 +247,7 @@ class OfflineProductSurveyDetailViewModel {
       }
 
       if (commodityUpdates.isEmpty) {
-        throw "No commodities to save.";
+        throw "No valid commodities to save. Please ensure commodities have valid IDs.";
       }
 
       final offlineData = {
@@ -260,7 +263,7 @@ class OfflineProductSurveyDetailViewModel {
 
       final key = 'offline_survey_data_${surveyId}_${marketId}_${categoryId}';
       await prefs.setString(key, jsonEncode(offlineData));
-      debugPrint("✅ Saved offline survey data to $key: $offlineData");
+      debugPrint("✅ Saved offline survey data to $key");
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -272,51 +275,18 @@ class OfflineProductSurveyDetailViewModel {
       debugPrint("❌ Error in Offline Save: $e");
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          backgroundColor: Colors.yellow.shade100,
-          behavior: SnackBarBehavior.floating,
-          content: Row(
-            children: [
-              const Icon(Icons.warning_amber_rounded,
-                  color: Colors.orange, size: 24),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  e.toString(),
-                  style: const TextStyle(color: Colors.black),
-                ),
-              ),
-            ],
-          ),
-          duration: const Duration(seconds: 3),
+          content: Text("Save Failed: $e"),
+          backgroundColor: Colors.red,
         ),
       );
     } finally {
-      // _viewModel.isLoading = false;
       _viewModel.setIsSaving(false);
       _viewModel.notifyListeners();
     }
   }
 
-  void updateAvailability(int commodityId, String availability) {
-    availability = availability.trim().toLowerCase();
-    _viewModel.availabilityMap[commodityId] = availability;
-    _viewModel.availabilityControllers[commodityId] =
-        TextEditingController(text: availability);
-    if (_viewModel.fetchedSurveyId != null &&
-        _viewModel.selectedMarket != null &&
-        _viewModel.selectedCategory != null) {
-      _saveLocalCommodityUpdate(
-          _viewModel.fetchedSurveyId!,
-          _viewModel.selectedMarket!.id,
-          _viewModel.selectedCategory!.id,
-          commodityId);
-    }
-    _viewModel.notifyListeners();
-  }
-
   Future<void> submitSurvey(BuildContext context) async {
     try {
-      // _viewModel.isLoading = true;
       _viewModel.setIsSubmitting(true);
       _viewModel.notifyListeners();
 
@@ -325,12 +295,16 @@ class OfflineProductSurveyDetailViewModel {
 
       if (_viewModel.selectedMarket == null ||
           _viewModel.selectedCategory == null) {
-        throw "Please select both Market and Category properly.";
+        throw "Please select both Market and Category.";
       }
 
-      if (_viewModel.fetchedZoneId == null ||
-          _viewModel.fetchedSurveyId == null) {
-        throw "Zone or Survey ID not found. Please validate or save the survey first.";
+      final surveyId = _viewModel.fetchedSurveyId;
+      final zoneId = _viewModel.fetchedZoneId;
+      final marketId = _viewModel.selectedMarket!.id;
+      final categoryId = _viewModel.selectedCategory!.id;
+
+      if (surveyId == null || zoneId == null) {
+        throw "Missing survey or zone information.";
       }
 
       List<int> commodityIds = [];
@@ -342,110 +316,67 @@ class OfflineProductSurveyDetailViewModel {
       List<String> commodityExpiryDates = [];
       List<String> commodityImages = [];
 
-      Map<int, int> savedCommodityToSurveyMap =
-          _viewModel.commodityToSubmittedSurveyId;
-      Set<int> processedCommodityIds = {};
+      for (var commodity in _viewModel.validatedCommodities) {
+        final commodityId = commodity.commodity?.id ?? commodity.id;
+        if (commodityId == null) continue;
 
-      _viewModel.fetchedBrandId = prefs.getInt('fetchedBrandId');
-      _viewModel.fetchedUnitId = prefs.getInt('fetchedUnitId');
+        _viewModel.initializeControllers(commodityId);
 
-      for (var entry in savedCommodityToSurveyMap.entries) {
-        int commodityId = entry.key;
-        int submittedSurveyId = entry.value;
+        // Allow empty price, expiry, image
+        final price = _viewModel.priceControllers[commodityId]?.text.trim() ??
+            _viewModel.priceMap[commodityId] ??
+            "";
+        final availability =
+            _viewModel.availabilityControllers[commodityId]?.text.trim() ??
+                _viewModel.availabilityMap[commodityId] ??
+                commodity.availability?.toLowerCase() ??
+                "moderate";
+        final expiryDate =
+            _viewModel.expiryControllers[commodityId]?.text.trim() ??
+                _viewModel.expiryDateMap[commodityId] ??
+                "";
+        final image = _viewModel.selectedImages[commodityId] ?? "";
 
-        ValidatedCommodity? validated;
-        try {
-          validated = _viewModel.validatedCommodities
-              .firstWhere((c) => c.commodity!.id == commodityId);
-        } catch (_) {
-          validated = null;
+        final unitId = commodity.unit?.id;
+        final brandId = commodity.brand?.id;
+
+        // Skip if missing required IDs
+        if (unitId == null || brandId == null) {
+          debugPrint(
+              "Skipping commodity $commodityId: Missing unitId or brandId");
+          continue;
         }
 
-        String controllerPrice =
-            _viewModel.priceControllers[commodityId]?.text.trim() ?? "";
-        String fallbackPrice = _viewModel.priceMap[commodityId]?.trim() ?? "";
-        String validPrice = _viewModel.isPriceTouched[commodityId] == true &&
-                controllerPrice.isNotEmpty
-            ? controllerPrice
-            : (validated?.amount ?? fallbackPrice);
-
-        String controllerAvailability = _viewModel
-                .availabilityControllers[commodityId]?.text
-                .trim()
-                .toLowerCase() ??
-            "";
-        String validAvailability = controllerAvailability.isNotEmpty
-            ? controllerAvailability
-            : (validated?.availability?.toLowerCase() ??
-                _viewModel.availabilityMap[commodityId]?.toLowerCase() ??
-                "low");
-
-        String expiryDate = _viewModel.expiryDateMap[commodityId] ??
-            validated?.commodityExpiryDate ??
-            "";
-        String image = _viewModel.selectedImages[commodityId] ?? "";
+        final submittedSurveyId =
+            _viewModel.commodityToSubmittedSurveyId[commodityId] ?? 0;
 
         commodityIds.add(commodityId);
         submittedSurveyIds.add(submittedSurveyId);
-        amounts.add(validPrice);
-        availabilities.add(validAvailability);
-        unitIds.add(_viewModel.fetchedUnitId ?? validated?.unit?.id ?? 0);
-        brandIds.add(_viewModel.fetchedBrandId ?? validated?.brand?.id ?? 0);
-        commodityExpiryDates.add(expiryDate);
-        commodityImages.add(image);
-
-        processedCommodityIds.add(commodityId);
-      }
-
-      for (var commodity in _viewModel.validatedCommodities) {
-        int commodityId = commodity.commodity!.id;
-        if (processedCommodityIds.contains(commodityId)) continue;
-
-        int submittedSurveyId =
-            _viewModel.commodityToSubmittedSurveyId[commodityId] ??
-                commodity.id;
-
-        String price = _viewModel.priceControllers[commodityId]?.text.trim() ??
-            _viewModel.priceMap[commodityId] ??
-            commodity.amount ??
-            "";
-        String availability = _viewModel
-                .availabilityControllers[commodityId]?.text
-                .trim()
-                .toLowerCase() ??
-            _viewModel.availabilityMap[commodityId] ??
-            commodity.availability ??
-            "low";
-        String expiryDate = _viewModel.expiryDateMap[commodityId] ??
-            commodity.commodityExpiryDate ??
-            "";
-        String image = _viewModel.selectedImages[commodityId] ?? "";
-
-        int unitId = commodity.unit?.id ?? 0;
-        int brandId = commodity.brand?.id ?? 0;
-
-        String validPrice = (price.isNotEmpty && double.tryParse(price) != null)
-            ? price
-            : (commodity.amount ?? "0");
-
-        commodityIds.add(commodityId);
-        submittedSurveyIds.add(submittedSurveyId);
-        amounts.add(validPrice);
+        amounts.add(price);
         availabilities.add(availability);
         unitIds.add(unitId);
         brandIds.add(brandId);
         commodityExpiryDates.add(expiryDate);
         commodityImages.add(image);
+
+        // Update local state
+        commodity.isSubmit;
+        _viewModel.isSubmitted[commodityId] = true;
+        _viewModel.isEditable[commodityId] = false;
+      }
+
+      if (commodityIds.isEmpty) {
+        throw "No valid commodities to submit. Please ensure commodities have valid IDs.";
       }
 
       // Save offline submission data
       final offlineData = {
         'token': prefs.getString('token') ?? '',
         'userId': userId,
-        'zoneId': _viewModel.fetchedZoneId,
-        'surveyId': _viewModel.fetchedSurveyId,
-        'marketId': _viewModel.selectedMarket!.id,
-        'categoryId': _viewModel.selectedCategory!.id,
+        'zoneId': zoneId,
+        'surveyId': surveyId,
+        'marketId': marketId,
+        'categoryId': categoryId,
         'submittedBy': userId,
         'commodityIds': commodityIds,
         'submittedSurveyIds': submittedSurveyIds,
@@ -460,21 +391,22 @@ class OfflineProductSurveyDetailViewModel {
       };
 
       final key =
-          'offline_submission_${_viewModel.fetchedSurveyId}_${DateTime.now().millisecondsSinceEpoch}';
+          'offline_submission_${surveyId}_${DateTime.now().millisecondsSinceEpoch}';
       await prefs.setString(key, jsonEncode(offlineData));
 
-      // Update local state
-      for (var commodity in _viewModel.validatedCommodities) {
-        _viewModel.isSubmitted[commodity.id] = true;
-        _viewModel.isEditable[commodity.id] = false;
-      }
-      _viewModel.isOfflineSubmitted =
-          true; // Mark as submitted offline in view model
+      // Persist validated commodities
+      await prefs.setString(
+        'validated_commodities_${surveyId}_${marketId}_${categoryId}',
+        jsonEncode(
+            _viewModel.validatedCommodities.map((c) => c.toJson()).toList()),
+      );
+
+      _viewModel.isOfflineSubmitted = true;
 
       debugPrint("✅ Survey submitted offline and saved for later sync: $key");
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text("Survey submitted offline. It will sync when online."),
+        const SnackBar(
+          content: Text("Survey submitted offline. Will sync when online."),
           backgroundColor: Colors.blue,
         ),
       );
@@ -482,22 +414,36 @@ class OfflineProductSurveyDetailViewModel {
       debugPrint("❌ Error in Offline Submit: $e");
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text("Offline Submit Failed: $e"),
+          content: Text("Submit Failed: $e"),
           backgroundColor: Colors.red,
         ),
       );
     } finally {
-      // _viewModel.isLoading = false;
       _viewModel.setIsSubmitting(false);
       _viewModel.notifyListeners();
     }
   }
 
+  void updateAvailability(int commodityId, String availability) {
+    availability = availability.trim().toLowerCase();
+    _viewModel.availabilityMap[commodityId] = availability;
+    _viewModel.initializeControllers(commodityId);
+    if (_viewModel.fetchedSurveyId != null &&
+        _viewModel.selectedMarket != null &&
+        _viewModel.selectedCategory != null) {
+      _saveLocalCommodityUpdate(
+          _viewModel.fetchedSurveyId!,
+          _viewModel.selectedMarket!.id,
+          _viewModel.selectedCategory!.id,
+          commodityId);
+    }
+    _viewModel.notifyListeners();
+  }
+
   void updateExpiryDate(int commodityId, String date) {
     date = date.trim();
     _viewModel.expiryDateMap[commodityId] = date;
-    _viewModel.expiryControllers[commodityId] =
-        TextEditingController(text: date); // Ensure controller is updated
+    _viewModel.initializeControllers(commodityId);
     if (_viewModel.fetchedSurveyId != null &&
         _viewModel.selectedMarket != null &&
         _viewModel.selectedCategory != null) {
@@ -527,9 +473,8 @@ class OfflineProductSurveyDetailViewModel {
   void updatePrice(int commodityId, String price) {
     price = price.trim();
     _viewModel.priceMap[commodityId] = price;
-    _viewModel.priceControllers[commodityId] =
-        TextEditingController(text: price);
     _viewModel.isPriceTouched[commodityId] = true;
+    _viewModel.initializeControllers(commodityId);
     if (_viewModel.fetchedSurveyId != null &&
         _viewModel.selectedMarket != null &&
         _viewModel.selectedCategory != null) {

@@ -31,6 +31,8 @@ class OnlineProductSurveyDetailViewModel {
       _viewModel.markets = detail.markets;
       _viewModel.categories = detail.categories;
 
+      await prefs.setInt('fetchedZoneId', detail.zone.id);
+      await prefs.setInt('fetchedSurveyId', detail.id);
       await prefs.setString(
         'survey_detail_$surveyId',
         jsonEncode({
@@ -54,7 +56,9 @@ class OnlineProductSurveyDetailViewModel {
   Future<void> fetchValidatedCommodities(
       int zoneId, int surveyId, int marketId, int categoryId) async {
     try {
+      _viewModel.isLoading = true;
       _viewModel.notifyListeners();
+
       _viewModel.validatedCommodities.clear();
       _viewModel.priceMap.clear();
       _viewModel.availabilityMap.clear();
@@ -84,17 +88,17 @@ class OnlineProductSurveyDetailViewModel {
         for (var commodity in _viewModel.validatedCommodities) {
           int commodityId = commodity.id;
           commodity.isEditable = !commodity.isSubmit;
-          _viewModel.isEditable[commodity.id] = commodity.isEditable;
-          _viewModel.isSubmitted[commodity.id] = commodity.isSubmit;
-          _viewModel.isSaved[commodity.id] = commodity.isSave;
-          _viewModel.priceMap[commodity.id] = commodity.amount ?? "";
-          _viewModel.availabilityMap[commodity.id] =
-              commodity.availability ?? "moderate";
-          _viewModel.expiryDateMap[commodity.id] =
+          _viewModel.isEditable[commodityId] = commodity.isEditable;
+          _viewModel.isSubmitted[commodityId] = commodity.isSubmit;
+          _viewModel.isSaved[commodityId] = commodity.isSave;
+          _viewModel.priceMap[commodityId] = commodity.amount ?? "";
+          _viewModel.availabilityMap[commodityId] =
+              commodity.availability?.toLowerCase() ?? "moderate";
+          _viewModel.expiryDateMap[commodityId] =
               commodity.commodityExpiryDate ?? "";
           if (commodity.commodityImageUrl != null &&
               commodity.commodityImageUrl!.isNotEmpty) {
-            _viewModel.selectedImages[commodity.id] =
+            _viewModel.selectedImages[commodityId] =
                 commodity.commodityImageUrl!;
           }
         }
@@ -108,7 +112,6 @@ class OnlineProductSurveyDetailViewModel {
             "✅ Saved validated commodities for $surveyId/$marketId/$categoryId");
       }
 
-      // Call offline method via public offlineViewModel
       await _viewModel.offlineViewModel
           .loadLocalCommodityUpdates(surveyId, marketId, categoryId);
 
@@ -124,7 +127,6 @@ class OnlineProductSurveyDetailViewModel {
 
   Future<void> saveSurvey(BuildContext context) async {
     try {
-      // _viewModel.isLoading = true;
       _viewModel.setIsSaving(true);
       _viewModel.notifyListeners();
 
@@ -156,85 +158,59 @@ class OnlineProductSurveyDetailViewModel {
 
       String getValue(
           String? controllerText, String? mapValue, String defaultValue) {
-        if (controllerText != null && controllerText.trim().isNotEmpty) {
-          return controllerText.trim();
-        }
-        return mapValue?.trim() ?? defaultValue;
+        return controllerText?.trim() ?? mapValue?.trim() ?? defaultValue;
       }
 
-      final commoditiesToProcess = _viewModel.isValidationSuccess &&
-              _viewModel.validatedCommodities.isNotEmpty
-          ? _viewModel.validatedCommodities.cast<ValidatedCommodity>()
-          : _viewModel.availableCommodities.cast<Commodity>();
-
-      for (var commodity in commoditiesToProcess) {
-        final isValidated = commodity is ValidatedCommodity;
-        final isRegular = commodity is Commodity;
-
-        if (!isValidated && !isRegular) continue;
-
-        final commodityId = isValidated
-            ? (commodity as ValidatedCommodity).commodity?.id ??
-                (commodity as ValidatedCommodity).id
-            : (commodity as Commodity).id;
-
+      for (var commodity in _viewModel.validatedCommodities) {
+        final commodityId = commodity.commodity?.id ?? commodity.id;
         if (commodityId == null) continue;
 
         _viewModel.initializeControllers(commodityId);
 
-        final unitId = isValidated
-            ? (commodity as ValidatedCommodity).unit?.id
-            : (commodity as Commodity).uom?.id;
-        final brandId = isValidated
-            ? (commodity as ValidatedCommodity).brand?.id
-            : (commodity as Commodity).brand?.id;
-
         final price = getValue(
           _viewModel.priceControllers[commodityId]?.text,
           _viewModel.priceMap[commodityId],
-          isValidated ? (commodity as ValidatedCommodity).amount ?? "0" : "0",
+          "",
         );
-
         final availability = getValue(
           _viewModel.availabilityControllers[commodityId]?.text,
           _viewModel.availabilityMap[commodityId],
-          isValidated
-              ? (commodity as ValidatedCommodity).availability ?? "moderate"
-              : "moderate",
+          commodity.availability?.toLowerCase() ?? "moderate",
         );
-
         final expiryDate = getValue(
           _viewModel.expiryControllers[commodityId]?.text,
           _viewModel.expiryDateMap[commodityId],
-          isValidated
-              ? (commodity as ValidatedCommodity).commodityExpiryDate ?? ""
-              : "",
+          "",
         );
+        final image = _viewModel.selectedImages[commodityId] ?? "";
 
-        final image = _viewModel.selectedImages[commodityId] ??
-            (isValidated
-                ? (commodity as ValidatedCommodity).commodityImageUrl
-                : null) ??
-            "";
+        final unitId = commodity.unit?.id;
+        final brandId = commodity.brand?.id;
 
-        _viewModel.updatePrice(commodityId, price);
+        if (unitId == null || brandId == null) {
+          debugPrint(
+              "Skipping commodity $commodityId: Missing unitId or brandId");
+          continue;
+        }
+
+        commodityIds.add(commodityId);
+        amounts.add(price);
+        availabilities.add(availability);
+        unitIds.add(unitId);
+        brandIds.add(brandId);
+        commodityExpiryDates.add(expiryDate);
+        commodityImages.add(image);
+
+        // Update local state
+        _viewModel.priceMap[commodityId] = price;
         _viewModel.availabilityMap[commodityId] = availability;
         _viewModel.expiryDateMap[commodityId] = expiryDate;
         _viewModel.selectedImages[commodityId] = image;
-
-        if (price.isNotEmpty) {
-          commodityIds.add(commodityId);
-          amounts.add(price);
-          availabilities.add(availability);
-          unitIds.add(unitId ?? 0);
-          brandIds.add(brandId ?? 0);
-          commodityExpiryDates.add(expiryDate);
-          commodityImages.add(image);
-        }
+        _viewModel.isSaved[commodityId] = true;
       }
 
       if (commodityIds.isEmpty) {
-        throw "No valid commodity data to save.";
+        throw "No valid commodities to save. Please ensure commodities have valid IDs.";
       }
 
       final response = await _authRepository.saveSurvey(
@@ -255,9 +231,9 @@ class OnlineProductSurveyDetailViewModel {
       );
 
       if (response['success'] == true) {
+        _viewModel.commodityToSubmittedSurveyId.clear();
         final responseData = response['data'] as List?;
         if (responseData != null) {
-          _viewModel.commodityToSubmittedSurveyId.clear();
           for (var item in responseData) {
             if (item is Map) {
               final submittedId = item['id'] as int?;
@@ -269,6 +245,14 @@ class OnlineProductSurveyDetailViewModel {
           }
         }
 
+        // Persist commodityToSubmittedSurveyId
+        await prefs.setString(
+          'commodity_survey_map_$surveyId',
+          jsonEncode(_viewModel.commodityToSubmittedSurveyId
+              .map((k, v) => MapEntry(k.toString(), v))),
+        );
+
+        // Clear local updates
         for (var id in commodityIds) {
           await prefs.remove(
               'commodity_update_${surveyId}_${_viewModel.selectedMarket!.id}_${_viewModel.selectedCategory!.id}_$id');
@@ -287,12 +271,11 @@ class OnlineProductSurveyDetailViewModel {
       debugPrint("❌ Error in Save: $e");
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(e.toString()),
+          content: Text("Save Failed: $e"),
           backgroundColor: Colors.red,
         ),
       );
     } finally {
-      //_viewModel.isLoading = false;
       _viewModel.setIsSaving(false);
       _viewModel.notifyListeners();
     }
@@ -307,13 +290,11 @@ class OnlineProductSurveyDetailViewModel {
       final token = prefs.getString('token') ?? '';
       final userId = prefs.getInt('user_id') ?? 0;
 
-      // Validate prerequisites
       if (_viewModel.selectedMarket?.id == null ||
           _viewModel.selectedCategory?.id == null) {
         throw "Please select both Market and Category.";
       }
 
-      // Ensure zone and survey IDs
       if (_viewModel.fetchedZoneId == null ||
           _viewModel.fetchedSurveyId == null) {
         if (_viewModel.validatedCommodities.isNotEmpty &&
@@ -327,7 +308,7 @@ class OnlineProductSurveyDetailViewModel {
           final zoneId = prefs.getInt('fetchedZoneId');
           final surveyId = prefs.getInt('fetchedSurveyId');
           if (zoneId == null || surveyId == null) {
-            throw "Survey details not loaded. Please try again.";
+            throw "Survey details not loaded. Please fetch survey details first.";
           }
           _viewModel.fetchedZoneId = zoneId;
           _viewModel.fetchedSurveyId = surveyId;
@@ -337,7 +318,7 @@ class OnlineProductSurveyDetailViewModel {
       debugPrint(
           "Submitting with zoneId=${_viewModel.fetchedZoneId}, surveyId=${_viewModel.fetchedSurveyId}");
 
-      // Load commodity survey map
+      // Load existing commodity survey map, if available
       final storedMapString =
           prefs.getString('commodity_survey_map_${_viewModel.fetchedSurveyId}');
       if (storedMapString != null) {
@@ -346,7 +327,6 @@ class OnlineProductSurveyDetailViewModel {
             decoded.map((key, value) => MapEntry(int.parse(key), value as int));
       }
 
-      // Gather commodity data
       List<int> commodityIds = [];
       List<int> submittedSurveyIds = [];
       List<String> amounts = [];
@@ -356,9 +336,68 @@ class OnlineProductSurveyDetailViewModel {
       List<String> commodityExpiryDates = [];
       List<String> commodityImages = [];
 
-      // ... (commodity processing logic remains the same)
+      String getValue(
+          String? controllerText, String? mapValue, String defaultValue) {
+        return controllerText?.trim() ?? mapValue?.trim() ?? defaultValue;
+      }
 
-      // Submit survey
+      for (var commodity in _viewModel.validatedCommodities) {
+        final commodityId = commodity.commodity?.id ?? commodity.id;
+        if (commodityId == null) continue;
+
+        _viewModel.initializeControllers(commodityId);
+
+        // Allow empty price, expiry, image
+        final price = getValue(
+          _viewModel.priceControllers[commodityId]?.text,
+          _viewModel.priceMap[commodityId],
+          "",
+        );
+        final availability = getValue(
+          _viewModel.availabilityControllers[commodityId]?.text,
+          _viewModel.availabilityMap[commodityId],
+          commodity.availability?.toLowerCase() ?? "moderate",
+        );
+        final expiryDate = getValue(
+          _viewModel.expiryControllers[commodityId]?.text,
+          _viewModel.expiryDateMap[commodityId],
+          "",
+        );
+        final image = _viewModel.selectedImages[commodityId] ?? "";
+
+        final unitId = commodity.unit?.id;
+        final brandId = commodity.brand?.id;
+
+        // Skip if missing required IDs
+        if (unitId == null || brandId == null) {
+          debugPrint(
+              "Skipping commodity $commodityId: Missing unitId or brandId");
+          continue;
+        }
+
+        final submittedSurveyId =
+            _viewModel.commodityToSubmittedSurveyId[commodityId] ?? 0;
+
+        commodityIds.add(commodityId);
+        submittedSurveyIds.add(submittedSurveyId);
+        amounts.add(price);
+        availabilities.add(availability);
+        unitIds.add(unitId);
+        brandIds.add(brandId);
+        commodityExpiryDates.add(expiryDate);
+        commodityImages.add(image);
+
+        // Update local state
+        _viewModel.priceMap[commodityId] = price;
+        _viewModel.availabilityMap[commodityId] = availability;
+        _viewModel.expiryDateMap[commodityId] = expiryDate;
+        _viewModel.selectedImages[commodityId] = image;
+      }
+
+      if (commodityIds.isEmpty) {
+        throw "No valid commodities to submit. Please ensure commodities have valid IDs.";
+      }
+
       final response = await _authRepository.submitSurvey(
         bearerToken: token,
         userId: userId,
@@ -379,14 +418,40 @@ class OnlineProductSurveyDetailViewModel {
 
       if (response['success'] == true) {
         for (var commodity in _viewModel.validatedCommodities) {
-          _viewModel.isSubmitted[commodity.id] = true;
-          _viewModel.isEditable[commodity.id] = false;
+          if (commodityIds.contains(commodity.commodity?.id ?? commodity.id)) {
+            commodity.isSubmit;
+            _viewModel.isSubmitted[commodity.id] = true;
+            _viewModel.isEditable[commodity.id] = false;
+          }
         }
+
+        // Update commodityToSubmittedSurveyId
+        _viewModel.commodityToSubmittedSurveyId.clear();
+        final responseData = response['data'] as List?;
+        if (responseData != null) {
+          for (var item in responseData) {
+            if (item is Map) {
+              final submittedId = item['id'] as int?;
+              final commId = item['commodity_id'] as int?;
+              if (submittedId != null && commId != null) {
+                _viewModel.commodityToSubmittedSurveyId[commId] = submittedId;
+              }
+            }
+          }
+        }
+
+        // Persist updated state
         await prefs.setString(
           'validated_commodities_${_viewModel.fetchedSurveyId}_${_viewModel.selectedMarket!.id}_${_viewModel.selectedCategory!.id}',
           jsonEncode(
               _viewModel.validatedCommodities.map((c) => c.toJson()).toList()),
         );
+        await prefs.setString(
+          'commodity_survey_map_${_viewModel.fetchedSurveyId}',
+          jsonEncode(_viewModel.commodityToSubmittedSurveyId
+              .map((k, v) => MapEntry(k.toString(), v))),
+        );
+
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content:
@@ -425,30 +490,50 @@ class OnlineProductSurveyDetailViewModel {
         return;
       }
 
+      final token = prefs.getString('token') ?? '';
+      final userId = prefs.getInt('user_id') ?? 0;
+
       for (var key in submissionKeys) {
         final storedData = prefs.getString(key);
         if (storedData == null) continue;
 
         final data = jsonDecode(storedData);
-        final token = data['token'] ?? prefs.getString('token') ?? '';
-        final userId = data['userId'];
-        final zoneId = data['zoneId'];
-        final surveyId = data['surveyId'];
-        final marketId = data['marketId'];
-        final categoryId = data['categoryId'];
-        final submittedBy = data['submittedBy'];
+        final zoneId = data['zoneId'] as int?;
+        final surveyId = data['surveyId'] as int?;
+        final marketId = data['marketId'] as int?;
+        final categoryId = data['categoryId'] as int?;
+        final submittedBy = data['submittedBy'] as int?;
 
-        List<int> commodityIds = List<int>.from(data['commodityIds']);
+        if (zoneId == null ||
+            surveyId == null ||
+            marketId == null ||
+            categoryId == null ||
+            submittedBy == null) {
+          debugPrint("Skipping sync for $key: Missing required fields");
+          continue;
+        }
+
+        List<int> commodityIds = List<int>.from(data['commodityIds'] ?? []);
         List<int> submittedSurveyIds =
-            List<int>.from(data['submittedSurveyIds']);
-        List<String> amounts = List<String>.from(data['amounts']);
-        List<String> availabilities = List<String>.from(data['availabilities']);
-        List<int> unitIds = List<int>.from(data['unitIds']);
-        List<int> brandIds = List<int>.from(data['brandIds']);
+            List<int>.from(data['submittedSurveyIds'] ?? []);
+        List<String> amounts = List<String>.from(data['amounts'] ?? []);
+        List<String> availabilities =
+            List<String>.from(data['availabilities'] ?? []);
+        List<int> unitIds = List<int>.from(data['unitIds'] ?? []);
+        List<int> brandIds = List<int>.from(data['brandIds'] ?? []);
         List<String> commodityExpiryDates =
-            List<String>.from(data['commodityExpiryDates']);
+            List<String>.from(data['commodityExpiryDates'] ?? []);
         List<String> commodityImages =
-            List<String>.from(data['commodityImages']);
+            List<String>.from(data['commodityImages'] ?? []);
+
+        // Validate data
+        if (commodityIds.isEmpty ||
+            amounts.any((a) => a.isEmpty || double.tryParse(a) == null) ||
+            unitIds.any((u) => u == 0) ||
+            brandIds.any((b) => b == 0)) {
+          debugPrint("Skipping sync for $key: Invalid commodity data");
+          continue;
+        }
 
         final response = await _authRepository.submitSurvey(
           bearerToken: token,
@@ -470,15 +555,45 @@ class OnlineProductSurveyDetailViewModel {
 
         if (response['success'] == true) {
           await prefs.remove(key);
-          _viewModel.isOfflineSubmitted =
-              false; // Reset offline submission flag
+          _viewModel.isOfflineSubmitted = false;
 
-          //  await _viewModel._markAsSubmittedOnline(); // Mark as submitted online
-
+          // Update local state
           for (var commodity in _viewModel.validatedCommodities) {
-            _viewModel.isSubmitted[commodity.id] = true;
-            _viewModel.isEditable[commodity.id] = false;
+            if (commodityIds
+                .contains(commodity.commodity?.id ?? commodity.id)) {
+              commodity.isSubmit;
+              _viewModel.isSubmitted[commodity.id] = true;
+              _viewModel.isEditable[commodity.id] = false;
+            }
           }
+
+          // Update commodityToSubmittedSurveyId
+          _viewModel.commodityToSubmittedSurveyId.clear();
+          final responseData = response['data'] as List?;
+          if (responseData != null) {
+            for (var item in responseData) {
+              if (item is Map) {
+                final submittedId = item['id'] as int?;
+                final commId = item['commodity_id'] as int?;
+                if (submittedId != null && commId != null) {
+                  _viewModel.commodityToSubmittedSurveyId[commId] = submittedId;
+                }
+              }
+            }
+          }
+
+          // Persist updated state
+          await prefs.setString(
+            'validated_commodities_${surveyId}_${marketId}_${categoryId}',
+            jsonEncode(_viewModel.validatedCommodities
+                .map((c) => c.toJson())
+                .toList()),
+          );
+          await prefs.setString(
+            'commodity_survey_map_$surveyId',
+            jsonEncode(_viewModel.commodityToSubmittedSurveyId
+                .map((k, v) => MapEntry(k.toString(), v))),
+          );
 
           debugPrint(
               "✅ Offline submission for $surveyId/$marketId/$categoryId synced successfully!");
@@ -489,17 +604,9 @@ class OnlineProductSurveyDetailViewModel {
               backgroundColor: Colors.green,
             ),
           );
-
-          _viewModel.commodityToSubmittedSurveyId.clear();
-          for (var item in response['data'] ?? []) {
-            _viewModel.commodityToSubmittedSurveyId[item['commodity_id']] =
-                item['id'];
-          }
-          await prefs.setString(
-            'commodity_survey_map_$surveyId',
-            jsonEncode(_viewModel.commodityToSubmittedSurveyId
-                .map((k, v) => MapEntry(k.toString(), v))),
-          );
+        } else {
+          debugPrint(
+              "Failed to sync offline submission for $key: ${response['message']}");
         }
       }
     } catch (e) {

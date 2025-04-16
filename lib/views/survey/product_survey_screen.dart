@@ -32,11 +32,13 @@ class _ProductSurveyDetailsScreenState extends State<ProductSurveyDetailsScreen>
       final args = ModalRoute.of(context)?.settings.arguments;
       final surveyId = args is int ? args : null;
       if (surveyId != null) {
+        log("Fetching survey details for surveyId: $surveyId");
         await context
             .read<ProductSurveyDetailViewModel>()
             .fetchSurveyDetail(surveyId);
       }
       if (await isInternetAvailable()) {
+        log("Syncing offline data");
         await context.read<ProductSurveyDetailViewModel>().syncOfflineData();
       }
     });
@@ -49,9 +51,11 @@ class _ProductSurveyDetailsScreenState extends State<ProductSurveyDetailsScreen>
     final surveyId = args is int ? args : null;
 
     if (surveyId != null) {
+      log("Refreshing survey details for surveyId: $surveyId");
       await viewModel.fetchSurveyDetail(surveyId);
       if (viewModel.selectedMarket != null &&
           viewModel.selectedCategory != null) {
+        log("Fetching validated commodities for market: ${viewModel.selectedMarket!.name}, category: ${viewModel.selectedCategory!.name}");
         await viewModel.fetchValidatedCommodities(
           viewModel.fetchedZoneId!,
           surveyId,
@@ -61,6 +65,7 @@ class _ProductSurveyDetailsScreenState extends State<ProductSurveyDetailsScreen>
       }
     }
     if (await isInternetAvailable()) {
+      log("Syncing offline data on refresh");
       await viewModel.syncOfflineData();
     }
     if (mounted) setState(() {});
@@ -92,6 +97,11 @@ class _ProductSurveyDetailsScreenState extends State<ProductSurveyDetailsScreen>
     final padding = isTablet ? 24.0 : 16.0;
     final baseFontSize = isTablet ? 16.0 : 12.0;
 
+    log("Submit button disabled: ${viewModel.isSubmitButtonDisabled}, "
+        "isSubmitting: ${viewModel.isSubmitting}, "
+        "validatedCommodities empty: ${viewModel.validatedCommodities.isEmpty}, "
+        "all submitted: ${viewModel.validatedCommodities.every((c) => c.isSubmit)}");
+
     return Scaffold(
       appBar: CustomAppBar(
         focusNode: focusNode,
@@ -117,7 +127,6 @@ class _ProductSurveyDetailsScreenState extends State<ProductSurveyDetailsScreen>
                           color: Colors.red,
                           size: isTablet ? 28 : 24,
                         ),
-                        //   SizedBox(width: padding / 2),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -151,7 +160,6 @@ class _ProductSurveyDetailsScreenState extends State<ProductSurveyDetailsScreen>
                       }).toList(),
                       onChanged: (val) {
                         viewModel.setSelectedMarket(val);
-                        viewModel.setSelectedCategory(null);
                         log("Selected Market: ${val?.name}");
                       },
                       decoration: InputDecoration(
@@ -225,7 +233,7 @@ class _ProductSurveyDetailsScreenState extends State<ProductSurveyDetailsScreen>
                             child: Padding(
                               padding: EdgeInsets.all(padding),
                               child: Text(
-                                "To proceed, choose a Market and Category first..",
+                                "To proceed, choose a Market and Category first.",
                                 style: TextStyle(
                                   fontSize: baseFontSize + 4,
                                   fontWeight: FontWeight.bold,
@@ -237,21 +245,30 @@ class _ProductSurveyDetailsScreenState extends State<ProductSurveyDetailsScreen>
                         : buildCommodityTable(viewModel, screenWidth,
                             isLandscape, isTablet, padding, context),
                     SizedBox(height: padding),
-                    if (!viewModel.isAnyCommoditySubmitted)
+                    if (viewModel.validatedCommodities.isNotEmpty &&
+                        !viewModel.validatedCommodities
+                            .every((c) => c.isSubmit))
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Expanded(
                             child: CustomButton(
-                              title: "Save",
-                              onPressed: () => viewModel.saveSurvey(context),
+                              title: viewModel.saveButtonText,
+                              disabled: viewModel.isSaving ||
+                                  viewModel.validatedCommodities.isEmpty,
+                              onPressed: () {
+                                log("Save button pressed");
+                                viewModel.saveSurvey(context);
+                              },
                             ),
                           ),
                           SizedBox(width: padding),
                           Expanded(
                             child: CustomButton(
-                              title: "Submit",
+                              title: viewModel.submitButtonText,
+                              disabled: viewModel.isSubmitButtonDisabled,
                               onPressed: () {
+                                log("Submit button pressed");
                                 showSubmitConfirmationDialog(
                                     context, viewModel);
                               },
